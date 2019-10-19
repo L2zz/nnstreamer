@@ -46,6 +46,8 @@ void fini_is (void) __attribute__ ((destructor));
 #define TFLITE_DEEPLAB_IMAGE_WIDTH     257
 #define TFLITE_DEEPLAB_IMAGE_HEIGHT    257
 
+const static float DETECTION_THRESHOLD = 0.5f;
+
 /**
  * @brief There can be different schemes for image segmentation.
  */
@@ -272,7 +274,24 @@ is_getTransformSize (void **pdata, const GstTensorsConfig * config,
 static void
 set_color_according_to_label (image_segments * idata, GstMapInfo * out_info)
 {
+  uint32_t *frame = (uint32_t *) out_info->data;
+  uint32_t *pos;
+  int i, j;
+  const uint32_t label_color[21] = {
+    0xFF000080, 0xFF800000, 0xFFFFEFD5, 0xFF40E0D0, 0xFFFFA500,
+    0xFF00FF00, 0xFFDC143C, 0xFFF0F8FF, 0xFF008000, 0xFFEE82EE,
+    0xFF808080, 0xFF4169E1, 0xFF008080, 0xFFFF6347, 0xFF000000,
+    0xFFFF4500, 0xFFDA70D6, 0xFFEEE8AA, 0xFF98FB98, 0xFFAFEEEE,
+    0xFFFFF5EE
+  };
 
+  for (i = 0; i < idata->i_height; i++) {
+    for (j = 0; j < idata->i_width; j++) {
+      int label_idx = idata->segment_map[i][j];
+      pos = &frame[i * idata->i_width + j];
+      *pos = label_color[label_idx];
+    }
+  }
 }
 
 
@@ -280,7 +299,33 @@ set_color_according_to_label (image_segments * idata, GstMapInfo * out_info)
 static void
 set_label_index (image_segments * idata, void *data)
 {
+  float *prob_map = (float *) data;
+  int idx, i, j;
+  int max_idx;
+  float max_prob;
 
+  for (i = 0; i < idata->i_height; i++) {
+    memset (idata->segment_map[i], 0, idata->i_width * sizeof (guint));
+  }
+
+  for (i = 0; i < idata->i_height; i++) {
+    for (j = 0; j < idata->i_width; j++) {
+      max_idx = 0;
+      max_prob = prob_map[i * idata->i_width * TFLITE_DEEPLAB_TOTAL_LABELS
+          + j * TFLITE_DEEPLAB_TOTAL_LABELS];
+      for (idx = 1; idx < TFLITE_DEEPLAB_TOTAL_LABELS; idx++) {
+        float prob = prob_map[i * idata->i_width * TFLITE_DEEPLAB_TOTAL_LABELS
+            + j * TFLITE_DEEPLAB_TOTAL_LABELS + idx];
+        if (prob > max_prob) {
+          max_prob = prob;
+          max_idx = idx;
+        }
+      }
+      if (max_prob > DETECTION_THRESHOLD) {
+        idata->segment_map[i][j] = max_idx;
+      }
+    }
+  }
 }
 
 /** @brief tensordec-plugin's GstTensorDecoderDef callback */
